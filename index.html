@@ -3,27 +3,19 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Avtobus Kuzatuv Tizimi</title>
+    <title>Avto-Kuzatuv Tizimi</title>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.7.1/dist/leaflet.css" />
     <style>
-        /* ASOSIY CSS */
         body, html { margin: 0; padding: 0; font-family: sans-serif; height: 100%; width: 100%; overflow: hidden; }
-        
-        /* Navbar hamma narsadan ustun turishi kerak */
         .navbar {
             position: fixed; top: 0; width: 100%; height: 60px;
             background: #007bff; color: white; display: none;
             align-items: center; justify-content: space-between;
             padding: 0 20px; box-sizing: border-box; z-index: 9999;
         }
-
-        /* Konteynerlar */
         .container { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; width: 100%; background: #f4f4f9; position: absolute; top: 0; left: 0; }
-        
-        /* Xarita butun ekranni egallashi shart */
         #map-container { display: none; height: 100vh; width: 100vw; position: relative; }
         #map { height: 100%; width: 100%; z-index: 1; }
-
         .card { background: white; padding: 30px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); text-align: center; width: 300px; }
         .role-card { cursor: pointer; padding: 20px; margin: 10px; border: 2px solid #eee; border-radius: 10px; transition: 0.3s; }
         .role-card:hover { border-color: #007bff; background: #f0f7ff; }
@@ -68,6 +60,7 @@
             <h2 id="bus-id-text">Avtobus</h2>
             <button id="trackBtn" onclick="toggleTracking()">Lokatsiyani Yoqish</button>
             <p id="status">Holat: To'xtatilgan</p>
+            <p style="font-size: 12px; color: gray;">Eslatma: Brauzerni yopmang, shunchaki "Home" tugmasi bilan fonda qoldiring.</p>
         </div>
     </div>
 
@@ -93,7 +86,14 @@
 
         let map, markers = {}, watchId, isTracking = false;
 
-        // Holatni tekshirish
+        // AVTOBUS IKONKASI
+        const busIcon = L.icon({
+            iconUrl: 'https://cdn-icons-png.flaticon.com/512/3448/3448339.png', // Avtobus rasmi
+            iconSize: [45, 45],
+            iconAnchor: [22, 22],
+            popupAnchor: [0, -20]
+        });
+
         auth.onAuthStateChanged(user => {
             if (user) {
                 showSection('driver-panel');
@@ -107,19 +107,17 @@
         });
 
         function showSection(id) {
-            // Hammasini yashirish
             document.getElementById('role-selection').style.display = 'none';
             document.getElementById('driver-auth').style.display = 'none';
             document.getElementById('driver-panel').style.display = 'none';
             document.getElementById('map-container').style.display = 'none';
             document.getElementById('main-nav').style.display = 'none';
 
-            // Keraklisini ochish
             const target = document.getElementById(id);
             if (id === 'map-container') {
                 target.style.display = 'block';
                 document.getElementById('main-nav').style.display = 'flex';
-                setTimeout(() => { map.invalidateSize(); }, 200); // Xaritani qayta chizish
+                setTimeout(() => { if(map) map.invalidateSize(); }, 300);
             } else {
                 target.style.display = 'flex';
                 if (id === 'driver-panel') document.getElementById('main-nav').style.display = 'flex';
@@ -129,8 +127,6 @@
         function startPassenger() {
             localStorage.setItem('mode', 'passenger');
             showSection('map-container');
-            document.getElementById('user-info').innerText = "Profil: Yo'lovchi";
-            
             if (!map) {
                 map = L.map('map').setView([40.9983, 71.6726], 13);
                 L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
@@ -138,9 +134,14 @@
                 db.ref('avtobuslar').on('value', snap => {
                     const data = snap.val();
                     for (let id in data) {
-                        const { lat, lng } = data[id];
-                        if (markers[id]) markers[id].setLatLng([lat, lng]);
-                        else markers[id] = L.marker([lat, lng]).addTo(map).bindPopup("Avtobus: " + id);
+                        const { lat, lng, vaqt } = data[id];
+                        if (markers[id]) {
+                            markers[id].setLatLng([lat, lng]);
+                        } else {
+                            // Marker o'rniga AVTOBUS IKONKASI ishlatiladi
+                            markers[id] = L.marker([lat, lng], {icon: busIcon}).addTo(map)
+                                           .bindPopup(`<b>Avtobus: ${id}</b><br>Vaqt: ${vaqt}`);
+                        }
                     }
                 });
             }
@@ -158,19 +159,32 @@
             const busId = auth.currentUser.email.split('@')[0].replace('.', '_');
 
             if (!isTracking) {
+                // FONDAGI ISHLASHNI YAXSHILASH UCHUN PARAMETRLAR
+                const geoOptions = {
+                    enableHighAccuracy: true, // Yuqori aniqlik
+                    maximumAge: 0,            // Keshdan olmaslik
+                    timeout: 10000            // 10 soniya kutish
+                };
+
                 watchId = navigator.geolocation.watchPosition(pos => {
                     db.ref('avtobuslar/' + busId).update({
                         lat: pos.coords.latitude,
                         lng: pos.coords.longitude,
                         vaqt: new Date().toLocaleTimeString()
                     });
-                    status.innerText = "Yuborilmoqda...";
-                }, null, { enableHighAccuracy: true });
+                    status.innerText = "Yuborilmoqda... (GPS faol)";
+                    status.style.color = "green";
+                }, err => {
+                    console.error(err);
+                    status.innerText = "GPS xatoligi!";
+                }, geoOptions);
+
                 btn.innerText = "To'xtatish"; btn.style.background = "red";
                 isTracking = true;
             } else {
                 navigator.geolocation.clearWatch(watchId);
                 btn.innerText = "Lokatsiyani Yoqish"; btn.style.background = "#28a745";
+                status.innerText = "To'xtatildi"; status.style.color = "black";
                 isTracking = false;
             }
         }
