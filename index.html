@@ -3,29 +3,84 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Avto-Kuzatuv Tizimi - Yo'lovchi</title>
-    <link rel="stylesheet" href="style.css">
+    <title>Avtobus Kuzatuv Tizimi</title>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.7.1/dist/leaflet.css" />
     <style>
-        #map { height: 100vh; width: 100%; display: block; }
-        .navbar { display: flex !important; } /* Yo'lovchi uchun doim ko'rinib turadi */
+        /* ASOSIY CSS */
+        body, html { margin: 0; padding: 0; font-family: sans-serif; height: 100%; width: 100%; overflow: hidden; }
+        
+        /* Navbar hamma narsadan ustun turishi kerak */
+        .navbar {
+            position: fixed; top: 0; width: 100%; height: 60px;
+            background: #007bff; color: white; display: none;
+            align-items: center; justify-content: space-between;
+            padding: 0 20px; box-sizing: border-box; z-index: 9999;
+        }
+
+        /* Konteynerlar */
+        .container { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; width: 100%; background: #f4f4f9; position: absolute; top: 0; left: 0; }
+        
+        /* Xarita butun ekranni egallashi shart */
+        #map-container { display: none; height: 100vh; width: 100vw; position: relative; }
+        #map { height: 100%; width: 100%; z-index: 1; }
+
+        .card { background: white; padding: 30px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); text-align: center; width: 300px; }
+        .role-card { cursor: pointer; padding: 20px; margin: 10px; border: 2px solid #eee; border-radius: 10px; transition: 0.3s; }
+        .role-card:hover { border-color: #007bff; background: #f0f7ff; }
+        input { width: 100%; padding: 12px; margin: 10px 0; border: 1px solid #ddd; border-radius: 6px; box-sizing: border-box; }
+        button { width: 100%; padding: 12px; background: #28a745; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: bold; }
+        .logout-btn { width: auto; background: #ff4747; padding: 8px 15px; }
     </style>
 </head>
 <body>
 
     <nav class="navbar" id="main-nav">
-        <span id="user-info">Profil: Yo'lovchi (Namangan)</span>
-        <button class="logout-btn" onclick="location.reload()">Bosh sahifa</button>
+        <span id="user-info">Profil</span>
+        <button class="logout-btn" onclick="logout()">Chiqish</button>
     </nav>
 
-    <div id="map"></div>
+    <div id="role-selection" class="container">
+        <div class="card">
+            <h2>Xush kelibsiz</h2>
+            <div class="role-card" onclick="startPassenger()">
+                <img src="https://cdn-icons-png.flaticon.com/512/2641/2641458.png" width="50"><br>
+                <h3>Yo'lovchi</h3>
+            </div>
+            <div class="role-card" onclick="showSection('driver-auth')">
+                <img src="https://cdn-icons-png.flaticon.com/512/1995/1995471.png" width="50"><br>
+                <h3>Haydovchi</h3>
+            </div>
+        </div>
+    </div>
+
+    <div id="driver-auth" class="container" style="display:none;">
+        <div class="card">
+            <h3>Haydovchi Kirishi</h3>
+            <input type="email" id="email" placeholder="Email">
+            <input type="password" id="pass" placeholder="Parol">
+            <button onclick="loginDriver()">Kirish</button>
+            <p onclick="location.reload()" style="cursor:pointer; color:blue; margin-top:10px;">Orqaga</p>
+        </div>
+    </div>
+
+    <div id="driver-panel" class="container" style="display:none;">
+        <div class="card">
+            <h2 id="bus-id-text">Avtobus</h2>
+            <button id="trackBtn" onclick="toggleTracking()">Lokatsiyani Yoqish</button>
+            <p id="status">Holat: To'xtatilgan</p>
+        </div>
+    </div>
+
+    <div id="map-container">
+        <div id="map"></div>
+    </div>
 
     <script src="https://unpkg.com/leaflet@1.7.1/dist/leaflet.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.1.3/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.1.3/firebase-auth-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.1.3/firebase-database-compat.js"></script>
 
     <script>
-        // FIREBASE KONFIGURATSIYASI
         const firebaseConfig = {
             apiKey: "AIzaSyDg2oWFdz3igLICZvXSUHGNUv3NEEdeHZ4",
             authDomain: "bus-tracker-578c8.firebaseapp.com",
@@ -33,55 +88,98 @@
             projectId: "bus-tracker-578c8"
         };
         firebase.initializeApp(firebaseConfig);
+        const auth = firebase.auth();
         const db = firebase.database();
 
-        // 1. Xaritani Namangan koordinatalarida ochish
-        // Namangan markazi: 40.9983, 71.6726
-        const map = L.map('map').setView([40.9983, 71.6726], 13);
-        
-        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-            attribution: '© OpenStreetMap contributors'
-        }).addTo(map);
+        let map, markers = {}, watchId, isTracking = false;
 
-        let markers = {};
-        let firstUpdate = true; // Birinchi marta lokatsiya olinganda xaritani o'sha yerga qaratish
-
-        // Avtobus uchun maxsus ikonka
-        const busIcon = L.icon({
-            iconUrl: 'https://cdn-icons-png.flaticon.com/512/3448/3448339.png',
-            iconSize: [40, 40],
-            iconAnchor: [20, 20]
+        // Holatni tekshirish
+        auth.onAuthStateChanged(user => {
+            if (user) {
+                showSection('driver-panel');
+                document.getElementById('user-info').innerText = "Haydovchi: " + user.email.split('@')[0];
+                document.getElementById('bus-id-text').innerText = "Avtobus: " + user.email.split('@')[0];
+            } else if (localStorage.getItem('mode') === 'passenger') {
+                startPassenger();
+            } else {
+                showSection('role-selection');
+            }
         });
 
-        // 2. Bazadan barcha avtobuslarni real vaqtda o'qish
-        db.ref('avtobuslar').on('value', (snapshot) => {
-            const data = snapshot.val();
+        function showSection(id) {
+            // Hammasini yashirish
+            document.getElementById('role-selection').style.display = 'none';
+            document.getElementById('driver-auth').style.display = 'none';
+            document.getElementById('driver-panel').style.display = 'none';
+            document.getElementById('map-container').style.display = 'none';
+            document.getElementById('main-nav').style.display = 'none';
+
+            // Keraklisini ochish
+            const target = document.getElementById(id);
+            if (id === 'map-container') {
+                target.style.display = 'block';
+                document.getElementById('main-nav').style.display = 'flex';
+                setTimeout(() => { map.invalidateSize(); }, 200); // Xaritani qayta chizish
+            } else {
+                target.style.display = 'flex';
+                if (id === 'driver-panel') document.getElementById('main-nav').style.display = 'flex';
+            }
+        }
+
+        function startPassenger() {
+            localStorage.setItem('mode', 'passenger');
+            showSection('map-container');
+            document.getElementById('user-info').innerText = "Profil: Yo'lovchi";
             
-            if (!data) {
-                console.log("Hozircha faol avtobuslar yo'q.");
-                return;
+            if (!map) {
+                map = L.map('map').setView([40.9983, 71.6726], 13);
+                L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
+                
+                db.ref('avtobuslar').on('value', snap => {
+                    const data = snap.val();
+                    for (let id in data) {
+                        const { lat, lng } = data[id];
+                        if (markers[id]) markers[id].setLatLng([lat, lng]);
+                        else markers[id] = L.marker([lat, lng]).addTo(map).bindPopup("Avtobus: " + id);
+                    }
+                });
             }
+        }
 
-            for (let id in data) {
-                const { lat, lng, vaqt } = data[id];
+        function loginDriver() {
+            const email = document.getElementById('email').value;
+            const pass = document.getElementById('pass').value;
+            auth.signInWithEmailAndPassword(email, pass).catch(err => alert("Xato: " + err.message));
+        }
 
-                if (markers[id]) {
-                    // Agar avtobus xaritada bo'lsa, o'rnini yangilash
-                    markers[id].setLatLng([lat, lng]);
-                } else {
-                    // Yangi avtobus markerini qo'shish
-                    markers[id] = L.marker([lat, lng], {icon: busIcon}).addTo(map)
-                                   .bindPopup(`<b>Avtobus: ${id}</b><br>Oxirgi yangilanish: ${vaqt}`);
-                }
+        function toggleTracking() {
+            const btn = document.getElementById('trackBtn');
+            const status = document.getElementById('status');
+            const busId = auth.currentUser.email.split('@')[0].replace('.', '_');
 
-                // Agar bu birinchi marta ma'lumot kelishi bo'lsa, xaritani o'sha yerga qaratish
-                if (firstUpdate) {
-                    map.setView([lat, lng], 15);
-                    firstUpdate = false;
-                }
+            if (!isTracking) {
+                watchId = navigator.geolocation.watchPosition(pos => {
+                    db.ref('avtobuslar/' + busId).update({
+                        lat: pos.coords.latitude,
+                        lng: pos.coords.longitude,
+                        vaqt: new Date().toLocaleTimeString()
+                    });
+                    status.innerText = "Yuborilmoqda...";
+                }, null, { enableHighAccuracy: true });
+                btn.innerText = "To'xtatish"; btn.style.background = "red";
+                isTracking = true;
+            } else {
+                navigator.geolocation.clearWatch(watchId);
+                btn.innerText = "Lokatsiyani Yoqish"; btn.style.background = "#28a745";
+                isTracking = false;
             }
-        });
+        }
 
+        function logout() {
+            if (watchId) navigator.geolocation.clearWatch(watchId);
+            localStorage.clear();
+            auth.signOut().then(() => { location.href = location.pathname; });
+        }
     </script>
 </body>
 </html>
