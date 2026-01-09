@@ -3,58 +3,150 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Avtobuslar Harakati - Jonli Xarita</title>
+    <title>Avto-Kuzatuv Tizimi</title>
     <link rel="stylesheet" href="style.css">
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.7.1/dist/leaflet.css" />
 </head>
 <body>
 
+    <nav class="navbar" id="main-nav">
+        <span id="user-info">Profil: Mehmon</span>
+        <button class="logout-btn" onclick="logout()">Chiqish (Log Out)</button>
+    </nav>
+
+    <div id="role-selection">
+        <h1>Xush kelibsiz!</h1>
+        <p>Davom etish uchun profilingizni tanlang:</p>
+        <div class="role-card" onclick="showPassengerMap()">
+            <img src="https://cdn-icons-png.flaticon.com/512/2641/2641458.png" width="80">
+            <h3>Yo'lovchi</h3>
+            <p>Avtobuslar joylashuvini ko'rish</p>
+        </div>
+        <div class="role-card" onclick="showDriverLogin()">
+            <img src="https://cdn-icons-png.flaticon.com/512/1995/1995471.png" width="80">
+            <h3>Haydovchi</h3>
+            <p>Tizimga kirish va lokatsiya yuborish</p>
+        </div>
+    </div>
+
     <div id="map"></div>
+
+    <div id="driver-auth">
+        <div class="form-group">
+            <h2>Haydovchi Kirishi</h2>
+            <input type="email" id="email" placeholder="Email">
+            <input type="password" id="pass" placeholder="Parol">
+            <button class="btn-primary" onclick="loginDriver()">Kirish</button>
+            <button onclick="location.reload()" style="background:none; border:none; color:blue; margin-top:10px; cursor:pointer;">Orqaga</button>
+        </div>
+    </div>
+
+    <div id="driver-panel">
+        <div class="form-group" style="text-align: center;">
+            <h2 id="bus-id-title">Avtobus Paneli</h2>
+            <p>Xaritada ko'rinish uchun tugmani bosing</p>
+            <button id="trackBtn" class="btn-primary" onclick="toggleTracking()">Lokatsiyani Yoqish</button>
+            <p id="status-text" style="margin-top:10px;">Holat: To'xtatilgan</p>
+        </div>
+    </div>
 
     <script src="https://unpkg.com/leaflet@1.7.1/dist/leaflet.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.1.3/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.1.3/firebase-auth-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.1.3/firebase-database-compat.js"></script>
 
     <script>
-        // SIZNING FIREBASE CONFIGINGIZ
         const firebaseConfig = {
             apiKey: "AIzaSyDg2oWFdz3igLICZvXSUHGNUv3NEEdeHZ4",
             authDomain: "bus-tracker-578c8.firebaseapp.com",
             databaseURL: "https://bus-tracker-578c8-default-rtdb.asia-southeast1.firebasedatabase.app",
-            projectId: "bus-tracker-578c8",
-            storageBucket: "bus-tracker-578c8.firebasestorage.app",
-            messagingSenderId: "393621176081",
-            appId: "1:393621176081:web:56149080e1b1f2a7b2d6b0"
+            projectId: "bus-tracker-578c8"
         };
-
         firebase.initializeApp(firebaseConfig);
+        const auth = firebase.auth();
         const db = firebase.database();
 
-        // Xaritani Toshkentga qaratib ochish
-        const map = L.map('map').setView([41.311081, 69.240562], 13);
-        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
+        // --- Yo'lovchi Funksiyalari ---
+        function showPassengerMap() {
+            document.getElementById('role-selection').style.display = 'none';
+            document.getElementById('map').style.display = 'block';
+            document.getElementById('main-nav').style.display = 'flex';
+            document.getElementById('user-info').innerText = "Profil: Yo'lovchi";
+            
+            initMap();
+        }
 
-        let markers = {};
-
-        // Avtobus belgisi uchun ikonka (ixtiyoriy)
-        const busIcon = L.icon({
-            iconUrl: 'https://cdn-icons-png.flaticon.com/512/3448/3448339.png',
-            iconSize: [35, 35]
-        });
-
-        // Bazadagi barcha avtobuslarni kuzatish
-        db.ref('avtobuslar').on('value', (snapshot) => {
-            const data = snapshot.val();
-            for (let id in data) {
-                const { lat, lng } = data[id];
-                if (markers[id]) {
-                    markers[id].setLatLng([lat, lng]);
-                } else {
-                    markers[id] = L.marker([lat, lng], {icon: busIcon}).addTo(map)
-                                   .bindPopup("Avtobus ID: " + id);
-                }
+        let map, markers = {};
+        function initMap() {
+            if (!map) {
+                map = L.map('map').setView([41.311081, 69.240562], 13);
+                L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
+                
+                db.ref('avtobuslar').on('value', (snapshot) => {
+                    const data = snapshot.val();
+                    for (let id in data) {
+                        const { lat, lng } = data[id];
+                        if (markers[id]) {
+                            markers[id].setLatLng([lat, lng]);
+                        } else {
+                            markers[id] = L.marker([lat, lng]).addTo(map).bindPopup("Avtobus: " + id);
+                        }
+                    }
+                });
             }
-        });
+        }
+
+        // --- Haydovchi Funksiyalari ---
+        function showDriverLogin() {
+            document.getElementById('role-selection').style.display = 'none';
+            document.getElementById('driver-auth').style.display = 'flex';
+        }
+
+        function loginDriver() {
+            const email = document.getElementById('email').value;
+            const pass = document.getElementById('pass').value;
+            auth.signInWithEmailAndPassword(email, pass).then(user => {
+                document.getElementById('driver-auth').style.display = 'none';
+                document.getElementById('driver-panel').style.display = 'flex';
+                document.getElementById('main-nav').style.display = 'flex';
+                document.getElementById('user-info').innerText = "Haydovchi: " + email.split('@')[0];
+                document.getElementById('bus-id-title').innerText = "Avtobus: " + email.split('@')[0];
+            }).catch(err => alert("Xatolik: " + err.message));
+        }
+
+        let isTracking = false, watchId = null;
+        function toggleTracking() {
+            const btn = document.getElementById('trackBtn');
+            const status = document.getElementById('status-text');
+            const busId = auth.currentUser.email.split('@')[0].replace('.', '_');
+
+            if (!isTracking) {
+                watchId = navigator.geolocation.watchPosition(pos => {
+                    db.ref('avtobuslar/' + busId).set({
+                        lat: pos.coords.latitude,
+                        lng: pos.coords.longitude,
+                        vaqt: new Date().toLocaleTimeString()
+                    });
+                    status.innerText = "Holat: Lokatsiya yuborilmoqda...";
+                    status.style.color = "green";
+                }, null, { enableHighAccuracy: true });
+                btn.innerText = "To'xtatish"; btn.style.background = "red";
+                isTracking = true;
+            } else {
+                navigator.geolocation.clearWatch(watchId);
+                status.innerText = "Holat: To'xtatildi"; status.style.color = "black";
+                btn.innerText = "Lokatsiyani Yoqish"; btn.style.background = "#28a745";
+                isTracking = false;
+            }
+        }
+
+        // --- Logout Funksiyasi ---
+        function logout() {
+            if (isTracking) navigator.geolocation.clearWatch(watchId);
+            auth.signOut().then(() => {
+                location.reload(); // Sahifani yangilab boshiga qaytaradi
+            });
+        }
     </script>
 </body>
 </html>

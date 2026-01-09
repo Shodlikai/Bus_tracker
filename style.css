@@ -1,65 +1,40 @@
-/* Umumiy sozlamalar */
-body, html {
-    margin: 0;
-    padding: 0;
-    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-    height: 100%;
+body, html { margin: 0; padding: 0; font-family: 'Arial', sans-serif; height: 100%; background: #f0f2f5; }
+
+/* Yuqori panel (Header) */
+.navbar {
+    position: fixed; top: 0; width: 100%; height: 60px;
+    background: #007bff; color: white; display: flex;
+    align-items: center; justify-content: space-between;
+    padding: 0 20px; box-sizing: border-box; z-index: 2000;
+    display: none; /* Faqat kirgandan keyin chiqadi */
 }
 
-/* Xarita uchun */
-#map {
-    height: 100vh;
-    width: 100%;
+.logout-btn {
+    background: #ff4d4d; color: white; border: none;
+    padding: 8px 15px; border-radius: 5px; cursor: pointer;
 }
 
-/* Login va Panel konteyneri */
-.container {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    height: 100vh;
-    background-color: #f4f4f9;
+/* Tanlov ekrani */
+#role-selection {
+    display: flex; flex-direction: column; align-items: center;
+    justify-content: center; height: 100vh; text-align: center;
 }
 
-.card {
-    background: white;
-    padding: 30px;
-    border-radius: 12px;
-    box-shadow: 0 4px 15px rgba(0,0,0,0.1);
-    text-align: center;
-    width: 300px;
+.role-card {
+    background: white; padding: 30px; margin: 10px;
+    border-radius: 15px; width: 280px; box-shadow: 0 4px 10px rgba(0,0,0,0.1);
+    cursor: pointer; transition: 0.3s;
 }
 
-input {
-    width: 100%;
-    padding: 12px;
-    margin: 10px 0;
-    border: 1px solid #ddd;
-    border-radius: 6px;
-    box-sizing: border-box;
+.role-card:hover { transform: translateY(-5px); background: #e7f1ff; }
+
+/* Xarita va Login formalari */
+#map { height: 100vh; width: 100%; display: none; }
+#driver-auth, #driver-panel { 
+    display: none; flex-direction: column; align-items: center; 
+    justify-content: center; height: 100vh; 
 }
 
-button {
-    width: 100%;
-    padding: 12px;
-    background-color: #28a745;
-    color: white;
-    border: none;
-    border-radius: 6px;
-    cursor: pointer;
-    font-size: 16px;
-    font-weight: bold;
-}
-
-button:hover {
-    background-color: #218838;
-}
-
-.status-box {
-    margin-top: 15px;
-    padding: 10px;
-    border-radius: 6px;
-    background: #e9ecef;
-    font-size: 14px;
-}
+.form-group { background: white; padding: 30px; border-radius: 10px; box-shadow: 0 4px 10px rgba(0,0,0,0.1); }
+input { width: 100%; padding: 10px; margin: 10px 0; border: 1px solid #ddd; border-radius: 5px; box-sizing: border-box; }
+.btn-primary { width: 100%; padding: 10px; background: #28a745; color: white; border: none; border-radius: 5px; cursor: pointer; }
