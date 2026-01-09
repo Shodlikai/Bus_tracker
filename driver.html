@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="uz">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Haydovchi Paneli</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+    <div class="container">
+        <div id="login-box" class="card">
+            <h2>Tizimga kirish</h2>
+            <input type="email" id="email" placeholder="Email (masalan: bus1@mail.uz)">
+            <input type="password" id="pass" placeholder="Parol">
+            <button onclick="login()">Kirish</button>
+        </div>
+
+        <div id="driver-panel" class="card" style="display:none;">
+            <h2 id="bus-name">Avtobus</h2>
+            <p>Hozirgi manzilingiz bazaga yuboriladi.</p>
+            <button id="trackBtn" onclick="toggleTracking()">Lokatsiyani yoqish</button>
+            <div id="status" class="status-box">Holat: To'xtatilgan</div>
+            <button onclick="location.reload()" style="background:#6c757d; margin-top:10px;">Chiqish</button>
+        </div>
+    </div>
+
+    <script src="https://www.gstatic.com/firebasejs/9.1.3/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.1.3/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.1.3/firebase-database-compat.js"></script>
+
+    <script>
+        const firebaseConfig = {
+            apiKey: "AIzaSyDg2oWFdz3igLICZvXSUHGNUv3NEEdeHZ4",
+            authDomain: "bus-tracker-578c8.firebaseapp.com",
+            databaseURL: "https://bus-tracker-578c8-default-rtdb.asia-southeast1.firebasedatabase.app",
+            projectId: "bus-tracker-578c8",
+            storageBucket: "bus-tracker-578c8.firebasestorage.app",
+            messagingSenderId: "393621176081",
+            appId: "1:393621176081:web:56149080e1b1f2a7b2d6b0"
+        };
+
+        firebase.initializeApp(firebaseConfig);
+        const auth = firebase.auth();
+        const db = firebase.database();
+
+        let isTracking = false;
+        let watchId = null;
+
+        function login() {
+            const email = document.getElementById('email').value;
+            const pass = document.getElementById('pass').value;
+            auth.signInWithEmailAndPassword(email, pass)
+                .then(user => {
+                    document.getElementById('login-box').style.display = 'none';
+                    document.getElementById('driver-panel').style.display = 'block';
+                    document.getElementById('bus-name').innerText = email.split('@')[0].toUpperCase();
+                })
+                .catch(err => alert("Xatolik: " + err.message));
+        }
+
+        function toggleTracking() {
+            const btn = document.getElementById('trackBtn');
+            const status = document.getElementById('status');
+            const busId = auth.currentUser.email.split('@')[0].replace('.', '_');
+
+            if (!isTracking) {
+                if (navigator.geolocation) {
+                    watchId = navigator.geolocation.watchPosition(pos => {
+                        db.ref('avtobuslar/' + busId).set({
+                            lat: pos.coords.latitude,
+                            lng: pos.coords.longitude,
+                            last_seen: new Date().toLocaleTimeString()
+                        });
+                        status.innerText = "Holat: Lokatsiya yuborilmoqda...";
+                        status.style.color = "green";
+                    }, err => alert("GPS-ni yoqing!"), { enableHighAccuracy: true });
+                    
+                    btn.innerText = "To'xtatish";
+                    btn.style.background = "red";
+                    isTracking = true;
+                }
+            } else {
+                navigator.geolocation.clearWatch(watchId);
+                status.innerText = "Holat: To'xtatildi";
+                status.style.color = "black";
+                btn.innerText = "Lokatsiyani yoqish";
+                btn.style.background = "#28a745";
+                isTracking = false;
+            }
+        }
+    </script>
+</body>
+</html>
