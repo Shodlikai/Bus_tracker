@@ -6,280 +6,249 @@ from firebase_admin import credentials, db
 import threading
 import time
 from datetime import datetime
+import re
 
-# --- 1. SAHIFA SOZLAMALARI ---
+# --- 1. SOZLAMALAR ---
 st.set_page_config(page_title="Bus-Dispetcher", page_icon="🚌", layout="wide")
 st.title("🚌 Avtobus Dispetcherlik Tizimi")
 
-# --- 2. SOZLAMALARNI YUKLASH ---
+# Admin ID ni sirlardan olish (yoki 0 qo'yish)
 try:
-    ADMIN_ID = st.secrets.get("admin_id", "0") # Admin ID string sifatida olinadi
+    ADMIN_ID = st.secrets.get("admin_id", "0")
 except:
     ADMIN_ID = "0"
 
+# Firebase ulanishi
 if not firebase_admin._apps:
     try:
         fb_config = dict(st.secrets["firebase_service_account"])
-        # Kalit formatini to'g'irlash
-        p_key = fb_config["private_key"]
-        if "\\n" in p_key:
-            p_key = p_key.replace("\\n", "\n")
-        fb_config["private_key"] = p_key
-
+        # Kalitni to'g'irlash
+        if "\\n" in fb_config["private_key"]:
+            fb_config["private_key"] = fb_config["private_key"].replace("\\n", "\n")
+            
         cred = credentials.Certificate(fb_config)
         firebase_admin.initialize_app(cred, {
             'databaseURL': st.secrets["firebase_database_url"]
         })
-        st.sidebar.success("Tizim: Aloqa bor ✅")
     except Exception as e:
-        st.error(f"Ulanish xatosi: {e}")
+        st.error(f"Xatolik: {e}")
         st.stop()
 
-# --- 3. BOTNI ISHGA TUSHIRISH (Fixed Conflict) ---
+# Botni ishga tushirish
 bot = telebot.TeleBot(st.secrets["telegram_bot_token"])
-
-# Webhookni majburan o'chirish (Conflict oldini olish uchun)
 try:
     bot.remove_webhook()
 except:
     pass
 
 # Vaqtincha xotira
-user_states = {} 
+user_states = {}
 
-# --- 4. KLAVIATURALAR ---
-def get_main_keyboard(user_id):
+# --- 2. KLAVIATURALAR ---
+def main_menu():
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
-    
-    # Admin tekshiruvi (Stringga o'tkazib solishtiramiz)
-    if str(user_id) == str(ADMIN_ID):
-        markup.add(types.KeyboardButton("👑 Admin Panel"))
-
     btn1 = types.KeyboardButton("🚀 Ishni boshlash")
     btn2 = types.KeyboardButton("🛑 Ishni yakunlash")
     btn3 = types.KeyboardButton("📩 Adminga murojaat")
     markup.add(btn1, btn2, btn3)
     return markup
 
-def get_contact_keyboard():
+def contact_btn():
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
     btn = types.KeyboardButton("📞 Telefon raqamni yuborish", request_contact=True)
-    back = types.KeyboardButton("Ortga")
-    markup.add(btn, back)
+    markup.add(btn)
     return markup
 
-def get_location_keyboard():
-    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-    btn = types.KeyboardButton("📍 Lokatsiyani yuborish (Live)", request_location=True)
-    back = types.KeyboardButton("Ortga")
-    markup.add(btn, back)
-    return markup
-
-# --- 5. BOT HANDLERLARI ---
+# --- 3. BOT FUNKSIYALARI ---
 
 @bot.message_handler(commands=['start'])
-def send_welcome(message):
+def start(message):
     uid = message.from_user.id
-    
-    welcome_text = "Assalomu alaykum, Haydovchi!"
-    if str(uid) == str(ADMIN_ID):
-        welcome_text = "Assalomu alaykum, Admin! Xush kelibsiz 👑"
-
     # Foydalanuvchini bazaga qo'shish
-    try:
-        db.reference(f'users/{uid}').update({
-            "name": message.from_user.full_name,
-            "status": "active"
-        })
-    except: pass
-    
-    bot.send_message(uid, welcome_text, reply_markup=get_main_keyboard(uid))
-
-# Kontaktni qabul qilish
-@bot.message_handler(content_types=['contact'])
-def handle_contact(message):
-    uid = message.from_user.id
-    if message.contact:
-        phone = message.contact.phone_number
-        user_states[uid] = {"phone": phone}
-        
-        msg = bot.send_message(uid, f"Raqam qabul qilindi: {phone}\n\nEndi Avtobus raqamini yozing (Masalan: 52):", reply_markup=types.ReplyKeyboardRemove())
-        bot.register_next_step_handler(msg, get_bus_number)
-
-def get_bus_number(message):
-    uid = message.chat.id
-    if message.text == "Ortga":
-        bot.send_message(uid, "Bekor qilindi", reply_markup=get_main_keyboard(uid))
-        return
-
-    bus_number = message.text
-    if uid in user_states:
-        user_states[uid]["bus_number"] = bus_number
-    else:
-        user_states[uid] = {"bus_number": bus_number, "phone": "Noma'lum"}
-
-    bot.send_message(uid, 
-                     f"Avtobus: {bus_number}.\n\nEndi 'Live Location' yuboring (8 soatlik):", 
-                     reply_markup=get_location_keyboard())
-
-@bot.message_handler(content_types=['text'])
-def handle_text(message):
-    uid = message.from_user.id
-    text = message.text
-
-    if text == "🚀 Ishni boshlash":
-        bot.send_message(uid, "Iltimos, avval telefon raqamingizni yuboring:", reply_markup=get_contact_keyboard())
-    
-    elif text == "🛑 Ishni yakunlash":
-        db.reference(f'buses/bus_{uid}').delete()
-        bot.send_message(uid, "Ish yakunlandi. Yaxshi dam oling!", reply_markup=get_main_keyboard(uid))
-
-    elif text == "📩 Adminga murojaat":
-        msg = bot.send_message(uid, "Xabaringizni yozib qoldiring:", reply_markup=types.ForceReply())
-        bot.register_next_step_handler(msg, save_feedback)
-    
-    elif text == "👑 Admin Panel" and str(uid) == str(ADMIN_ID):
-        bot.send_message(uid, "Admin panel faqat Streamlit saytida ishlaydi.")
-
-    elif text == "Ortga":
-        bot.send_message(uid, "Bosh menyu", reply_markup=get_main_keyboard(uid))
-
-def save_feedback(message):
-    uid = message.from_user.id
-    db.reference('feedback').push({
-        "user_id": uid,
+    db.reference(f'users/{uid}').update({
         "name": message.from_user.full_name,
-        "text": message.text,
-        "date": str(datetime.now()),
-        "status": "new"
+        "status": "active"
     })
-    bot.send_message(uid, "Xabar yuborildi ✅", reply_markup=get_main_keyboard(uid))
+    bot.send_message(uid, "Assalomu alaykum! Tizimga xush kelibsiz.", reply_markup=main_menu())
 
-# --- LOKATSIYANI SAQLASH ---
-def save_location(message):
+# 1. KONTAKT QABUL QILISH
+@bot.message_handler(content_types=['contact'])
+def get_contact(message):
+    uid = message.from_user.id
+    phone = message.contact.phone_number
+    user_states[uid] = {"phone": phone}
+    
+    msg = bot.send_message(uid, f"Raqam olindi: {phone}\n\nEndi Avtobus raqamini yozing (Masalan: 52):", reply_markup=types.ReplyKeyboardRemove())
+    bot.register_next_step_handler(msg, get_bus_num)
+
+def get_bus_num(message):
+    uid = message.chat.id
+    bus_num = message.text
+    
+    if uid in user_states:
+        user_states[uid]["bus_number"] = bus_num
+    else:
+        user_states[uid] = {"bus_number": bus_num, "phone": "Noma'lum"}
+        
+    # YO'RIQNOMA (Infinite Location uchun)
+    bot.send_message(uid, 
+                     f"✅ Avtobus: {bus_num}\n\n"
+                     f"Endi **Jonli Joylashuv (Live Location)** tashlashingiz kerak:\n\n"
+                     f"1. Pastdagi 📎 (Skrepka) tugmasini bosing.\n"
+                     f"2. 'Joylashuv' (Location) ni tanlang.\n"
+                     f"3. **'Jonli joylashuvni ulashish' (Share My Live Location)** ni bosing.\n"
+                     f"4. Vaqtni **8 soat** yoki cheksiz qilib belgilang.",
+                     reply_markup=main_menu())
+
+# 2. LOKATSIYANI SAQLASH
+def save_data(message):
     if message.location:
         uid = message.from_user.id
         
+        # Ma'lumotlarni yig'ish
         state = user_states.get(uid, {})
-        bus_num = state.get("bus_number", "Noma'lum")
-        phone_num = state.get("phone", "Mavjud emas")
+        bus_num = state.get("bus_number", "Aniqlanmoqda...")
+        phone = state.get("phone", "Yo'q")
         
-        if bus_num == "Noma'lum":
-            existing = db.reference(f'buses/bus_{uid}').get()
-            if existing:
-                bus_num = existing.get('bus_number', bus_num)
-                phone_num = existing.get('phone', phone_num)
+        # Agar xotirada bo'lmasa, bazadan tekshirish
+        if bus_num == "Aniqlanmoqda...":
+            old_data = db.reference(f'buses/bus_{uid}').get()
+            if old_data:
+                bus_num = old_data.get('bus_number', bus_num)
+                phone = old_data.get('phone', phone)
 
+        # Bazaga yozish
         db.reference(f'buses/bus_{uid}').update({
             "id": uid,
             "name": message.from_user.full_name,
             "bus_number": bus_num,
-            "phone": phone_num,
+            "phone": phone,
             "latitude": message.location.latitude,
             "longitude": message.location.longitude,
             "last_update": datetime.now().strftime("%H:%M:%S")
         })
 
 @bot.message_handler(content_types=['location'])
-def handle_loc(message):
-    save_location(message)
-    bot.reply_to(message, "✅ Lokatsiya qabul qilindi!", reply_markup=types.ReplyKeyboardRemove())
+def location_handler(message):
+    save_data(message)
 
 @bot.edited_message_handler(content_types=['location'])
-def handle_live(message):
-    save_location(message)
+def live_location_handler(message):
+    save_data(message)
 
-# --- 6. BOT THREAD MANAGEMENT (409 Conflict Fix) ---
-def start_bot_polling():
+# 3. MUROJAAT TIZIMI (Bot <-> Admin)
+@bot.message_handler(content_types=['text'])
+def text_handler(message):
+    uid = message.from_user.id
+    text = message.text
+    
+    # --- ADMIN JAVOB YOZSA ---
+    if str(uid) == str(ADMIN_ID) and message.reply_to_message:
+        try:
+            # Original xabardan ID ni ajratib olish
+            original_text = message.reply_to_message.text
+            # Regex orqali ID ni qidiramiz (ID: 12345)
+            match = re.search(r"ID: (\d+)", original_text)
+            if match:
+                target_id = match.group(1)
+                bot.send_message(target_id, f"👨‍💻 **Admin Javobi:**\n{text}")
+                bot.send_message(ADMIN_ID, "Javob yuborildi ✅")
+            else:
+                bot.send_message(ADMIN_ID, "Foydalanuvchi IDsi topilmadi.")
+        except Exception as e:
+            bot.send_message(ADMIN_ID, f"Xatolik: {e}")
+        return
+
+    # --- FOYDALANUVCHI KOMANDALARI ---
+    if text == "🚀 Ishni boshlash":
+        bot.send_message(uid, "Avval telefon raqamingizni yuboring:", reply_markup=contact_btn())
+        
+    elif text == "🛑 Ishni yakunlash":
+        db.reference(f'buses/bus_{uid}').delete()
+        bot.send_message(uid, "Ish yakunlandi. Xaritadan o'chirildingiz.", reply_markup=main_menu())
+        
+    elif text == "📩 Adminga murojaat":
+        msg = bot.send_message(uid, "Xabaringizni yozing:", reply_markup=types.ForceReply())
+        bot.register_next_step_handler(msg, send_to_admin)
+
+def send_to_admin(message):
+    uid = message.from_user.id
+    name = message.from_user.full_name
+    text = message.text
+    phone = user_states.get(uid, {}).get("phone", "Noma'lum")
+    
+    # Adminga maxsus formatda yuborish (Javob berish oson bo'lishi uchun)
+    admin_msg = (f"📩 **YANGI MUROJAAT**\n\n"
+                 f"👤 **Ism:** {name}\n"
+                 f"📱 **Tel:** {phone}\n"
+                 f"🆔 **ID:** {uid}\n\n"
+                 f"📄 **Xabar:** {text}")
+    
+    try:
+        bot.send_message(ADMIN_ID, admin_msg)
+        bot.send_message(uid, "✅ Xabaringiz Adminga yuborildi. Javobni shu yerda kutishingiz mumkin.", reply_markup=main_menu())
+    except:
+        bot.send_message(uid, "Admin ID sozlanmagan, xabar yetib bormadi.")
+
+# --- 4. BOT OQIMI (THREAD) ---
+def run_bot():
     while True:
         try:
-            # interval=2 botni biroz sekinlashtiradi lekin conflictni kamaytiradi
-            bot.polling(none_stop=True, interval=2, timeout=30)
-        except Exception as e:
+            bot.polling(none_stop=True, interval=2)
+        except:
             time.sleep(5)
 
-# Thread nomini tekshirish orqali ikkinchi bot ochilishini oldini olamiz
-thread_exists = False
-for t in threading.enumerate():
-    if t.name == "BusBotThread":
-        thread_exists = True
-
-if not thread_exists:
-    t = threading.Thread(target=start_bot_polling, name="BusBotThread", daemon=True)
+if 'is_bot_running' not in st.session_state:
+    t = threading.Thread(target=run_bot, daemon=True)
     t.start()
-    st.sidebar.success("Bot Server: Ishga tushdi 🚀")
-else:
-    st.sidebar.info("Bot Server: Faol (Stable) ✅")
+    st.session_state.is_bot_running = True
 
-# --- 7. STREAMLIT ADMIN PANELI (YANGILANGAN DIZAYN) ---
+# --- 5. STREAMLIT INTERFEYSI (Sodda va Aniq) ---
 
-menu = st.sidebar.radio("Menyu", ["📊 Statistika", "📩 Xabarlar", "🚌 Haydovchilar"])
+# Admin login (faqat ko'rinish uchun, aslida ochiq panel)
+st.sidebar.header("🚌 Dispetcher Paneli")
+st.sidebar.success("Bot holati: Ishlamoqda 🟢")
 
-if menu == "📊 Statistika":
-    st.header("Umumiy Statistika")
-    try:
-        buses = db.reference('buses').get() or {}
-        users = db.reference('users').get() or {}
-        
-        c1, c2 = st.columns(2)
-        c1.metric("Jami Foydalanuvchilar", len(users))
-        c2.metric("Faol Avtobuslar", len(buses))
-        
-        if st.button("🔄 Yangilash"): st.rerun()
-    except: st.write("Ma'lumot yo'q")
+# Asosiy ekran
+st.subheader("📍 Lineyadagi Haydovchilar")
 
-elif menu == "📩 Xabarlar":
-    st.header("Kelgan Murojaatlar")
-    feedbacks = db.reference('feedback').get()
-    if feedbacks:
-        for key, val in feedbacks.items():
-            if val.get('status') == 'new':
-                with st.container(border=True): # Xabarlarni ajratib turadi
-                    st.subheader(f"👤 {val['name']}")
-                    st.write(f"📝 {val['text']}")
-                    st.caption(f"📅 {val['date']}")
-                    
-                    r_text = st.text_input("Javob yozish:", key=key)
-                    if st.button("Yuborish 📤", key=f"btn_{key}"):
-                        try:
-                            bot.send_message(val['user_id'], f"👨‍💻 Admin: {r_text}")
-                            db.reference(f'feedback/{key}').update({"status": "answered"})
-                            st.success("Yuborildi!")
-                            time.sleep(1)
-                            st.rerun()
-                        except: st.error("Yuborishda xato")
-    else:
-        st.info("Yangi xabarlar yo'q.")
-
-elif menu == "🚌 Haydovchilar":
-    st.header("Hozirgi Online Haydovchilar")
+# Bazadan o'qish
+try:
+    data = db.reference('buses').get()
     
-    # Avtomatik yangilash (har 10 sekundda)
-    if st.button("🔄 Ro'yxatni yangilash"):
-        st.rerun()
-    
-    buses = db.reference('buses').get()
-    
-    if buses:
-        # Har bir haydovchi uchun alohida KARTA (Container)
-        for bid, info in buses.items():
-            # border=True har bir haydovchini ramkaga oladi
-            with st.container(border=True):
-                c1, c2, c3 = st.columns([3, 3, 2])
+    if data:
+        for key, val in data.items():
+            # Sodda, birinchi versiyadagi kabi dizayn
+            # Har bir haydovchi uchun alohida blok
+            with st.expander(f"🚍 {val.get('bus_number', '?')}-Avtobus | {val['name']}", expanded=True):
+                c1, c2, c3 = st.columns(3)
                 
                 with c1:
-                    st.markdown(f"### 🚌 {info.get('bus_number', '?')}-Avtobus")
-                    st.write(f"👤 **Haydovchi:** {info['name']}")
+                    st.markdown(f"**Haydovchi:** {val['name']}")
+                    st.markdown(f"**ID:** `{val['id']}`")
                 
                 with c2:
-                    st.write(f"📞 **Tel:** `{info.get('phone', 'Noma\'lum')}`")
-                    st.write(f"🕒 **Vaqt:** {info.get('last_update', '-')}")
+                    st.markdown(f"**Tel:** `{val.get('phone', 'Noma\'lum')}`")
+                    st.markdown(f"**Vaqt:** {val.get('last_update', '-')}")
                 
                 with c3:
-                    st.write("") # Bo'sh joy
-                    if st.button("🚫 O'chirish", key=bid, type="primary"):
-                        db.reference(f'buses/{bid}').delete()
-                        st.warning("Haydovchi o'chirildi!")
+                    st.markdown(f"**Lat:** `{val['latitude']}`")
+                    st.markdown(f"**Lon:** `{val['longitude']}`")
+                    
+                    # O'chirish tugmasi
+                    if st.button("🚫 O'chirish", key=key):
+                        db.reference(f'buses/{key}').delete()
+                        st.rerun()
+    else:
+        st.info("Hozircha online haydovchilar yo'q.")
+        
+except Exception as e:
+    st.error("Bazadan o'qishda xatolik. Iltimos, Firebase sozlamalarini tekshiring.")
+
+# Avtomatik yangilash tugmasi
+if st.button("🔄 Yangilash"):
+    st.rerun()
+'chirildi!")
                         time.sleep(1)
                         st.rerun()
     else:
